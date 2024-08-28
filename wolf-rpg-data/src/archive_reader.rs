@@ -3,16 +3,29 @@ use crate::Error;
 use crate::Key;
 use crate::DEFAULT_KEY_STRING;
 use encoding_rs::SHIFT_JIS;
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
 
+fn key_xor(position: u64, key: Key, buffer: &mut [u8]) {
+    let position_usize = usize::try_from(position).unwrap();
+    let key_len = key.len();
+
+    for (i, out_byte) in buffer.iter_mut().enumerate() {
+        let key_byte = key[(position_usize + i) % key_len];
+
+        *out_byte ^= key_byte;
+    }
+}
+
 /// A reader for an archive.
 #[derive(Debug)]
 pub struct ArchiveReader<R> {
-    reader: R,
-    position: u64,
+    reader: RefCell<R>,
+    position: Cell<u64>,
     key: Key,
 
     /// The string encoding.
@@ -30,8 +43,8 @@ impl<R> ArchiveReader<R> {
     pub fn new(reader: R) -> Self {
         let key = create_key(DEFAULT_KEY_STRING);
         Self {
-            reader,
-            position: 0,
+            reader: RefCell::new(reader),
+            position: Cell::new(0),
             key,
 
             encoding: SHIFT_JIS,
@@ -46,16 +59,14 @@ where
 {
     /// Read encoded bytes to a buffer.
     fn read_encoded(&mut self, buffer: &mut [u8]) -> Result<(), Error> {
-        let position_usize = usize::try_from(self.position).unwrap();
-        let key_len = self.key.len();
+        let mut reader = self.reader.borrow_mut();
+        reader.read_exact(buffer)?;
 
-        self.reader.read_exact(buffer)?;
-        for (i, out_byte) in buffer.iter_mut().enumerate() {
-            let key_byte = self.key[(position_usize + i) % key_len];
+        let position = self.position.get();
+        key_xor(position, self.key, buffer);
+        let new_position = position + u64::try_from(buffer.len()).unwrap();
 
-            *out_byte ^= key_byte;
-        }
-        self.position += u64::try_from(buffer.len()).unwrap();
+        self.position.set(new_position);
 
         Ok(())
     }
@@ -139,6 +150,11 @@ where
         let compressed_data_size = self.read_encoded_u64()?;
 
         let attributes = Attributes::from_bits_retain(attributes);
+        let compressed_data_size = if compressed_data_size == u64::MAX {
+            None
+        } else {
+            Some(compressed_data_size)
+        };
 
         Ok(FileEntry {
             name_position,
@@ -206,18 +222,18 @@ where
             }
         };
 
-        dbg!(data_position);
-
-        self.position = self
-            .reader
-            .seek(SeekFrom::Start(file_name_table_position))?;
+        self.position.set(
+            self.reader
+                .borrow_mut()
+                .seek(SeekFrom::Start(file_name_table_position))?,
+        );
 
         let mut file_name_table = BTreeMap::new();
         let mut file_table = BTreeMap::new();
         let mut directory_table = BTreeMap::new();
 
         loop {
-            let relative_position = self.position - file_name_table_position;
+            let relative_position = self.position.get() - file_name_table_position;
             if relative_position >= file_table_position {
                 break;
             }
@@ -227,29 +243,31 @@ where
         }
 
         loop {
-            let header_position = self.position - file_name_table_position;
+            let header_position = self.position.get() - file_name_table_position;
             if header_position >= directory_table_position {
                 break;
             }
-            let relative_position = self.position - file_name_table_position - file_table_position;
+            let relative_position =
+                self.position.get() - file_name_table_position - file_table_position;
 
             let file_entry = self.read_file_entry()?;
             file_table.insert(relative_position, file_entry);
         }
 
         loop {
-            let header_position = self.position - file_name_table_position;
+            let header_position = self.position.get() - file_name_table_position;
             if header_position >= u64::from(file_header_size) {
                 break;
             }
             let relative_position =
-                self.position - file_name_table_position - directory_table_position;
+                self.position.get() - file_name_table_position - directory_table_position;
 
             let directory_entry = self.read_directory_entry()?;
             directory_table.insert(relative_position, directory_entry);
         }
 
         self.header_data = Some(ArchiveHeaderData {
+            data_position,
             file_name_table,
             file_table,
             directory_table,
@@ -320,11 +338,39 @@ where
 
         Ok(directory_entry)
     }
+
+    /// Get a file reader.
+    pub fn get_file_reader(&self, file_entry: &FileEntry) -> Result<FileReader<R>, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        if file_entry.is_dir() {
+            return Err(Error::NotAFile);
+        }
+
+        let mut reader = self
+            .reader
+            .try_borrow_mut()
+            .map_err(|_| Error::ReaderBusy)?;
+
+        let new_position = reader.seek(SeekFrom::Start(
+            header_data.data_position + file_entry.data_position,
+        ))?;
+
+        self.position.set(new_position);
+
+        Ok(FileReader {
+            reader,
+            key: self.key,
+            offset: 0,
+            size: file_entry.data_size,
+        })
+    }
 }
 
 /// Data extracted from the header
 #[derive(Debug)]
 struct ArchiveHeaderData {
+    data_position: u64,
     file_name_table: BTreeMap<u64, String>,
     file_table: BTreeMap<u64, FileEntry>,
     directory_table: BTreeMap<u64, DirectoryEntry>,
@@ -338,7 +384,7 @@ pub struct FileEntry {
     time: FileTimes,
     data_position: u64,
     data_size: u64,
-    compressed_data_size: u64,
+    compressed_data_size: Option<u64>,
 }
 
 impl FileEntry {
@@ -346,12 +392,23 @@ impl FileEntry {
     pub fn is_dir(&self) -> bool {
         self.attributes.contains(Attributes::Directory)
     }
+
+    /// Returns true if this is for a file.
+    pub fn is_file(&self) -> bool {
+        !self.is_dir()
+    }
+
+    /// Returns true if this is compressed.
+    pub fn is_compressed(&self) -> bool {
+        self.compressed_data_size.is_some()
+    }
 }
 
 bitflags::bitflags! {
     #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
     pub struct Attributes: u64 {
-        const Directory = 0x10;
+        const Directory = 0x0010;
+        const Archive = 0x0020;
     }
 }
 
@@ -376,5 +433,38 @@ impl DirectoryEntry {
     /// Get the number of files in this dir.
     pub fn num_files(&self) -> u64 {
         self.num_files
+    }
+}
+
+/// A reader for files
+#[derive(Debug)]
+pub struct FileReader<'a, R> {
+    reader: std::cell::RefMut<'a, R>,
+    key: Key,
+    offset: u64,
+    size: u64,
+}
+
+impl<R> Read for FileReader<'_, R>
+where
+    R: Read,
+{
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if self.offset == self.size {
+            return Ok(0);
+        }
+
+        let limit = usize::try_from(self.size - self.offset).unwrap();
+        let limit = std::cmp::min(limit, buffer.len());
+
+        let n = self.reader.read(&mut buffer[..limit])?;
+
+        let buffer = &mut buffer[..n];
+        key_xor(self.offset + self.size, self.key, buffer);
+
+        let buffer_len_u64 = u64::try_from(buffer.len()).unwrap();
+        self.offset += buffer_len_u64;
+
+        Ok(n)
     }
 }

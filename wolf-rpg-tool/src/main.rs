@@ -1,11 +1,16 @@
 use anyhow::Context;
 use std::fs::File;
+use std::path::PathBuf;
 use wolf_rpg_data::ArchiveReader;
 
 fn main() -> anyhow::Result<()> {
     let path = std::env::args().nth(1).context("missing path")?;
     let file = File::open(path)?;
     let mut reader = ArchiveReader::new(file);
+
+    let output = PathBuf::from("out");
+
+    std::fs::create_dir_all(&output)?;
 
     reader.read_header()?;
 
@@ -22,14 +27,28 @@ fn main() -> anyhow::Result<()> {
                 .context("no file")?;
 
             let file_name = reader.get_file_name(file)?;
+
+            let mut path = path.clone();
+            path.push(file_name);
             dbg!(&path);
-            dbg!(file_name);
 
             if file.is_dir() {
                 let dir = reader.get_dir_from_file(file)?;
-                let mut path = path.clone();
-                path.push(file_name);
                 stack.push((dir, path));
+            } else {
+                assert!(!file.is_compressed());
+
+                let mut output = output.clone();
+                output.extend(&path);
+
+                if let Some(parent) = output.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+
+                let mut reader = reader.get_file_reader(file)?;
+
+                let mut file = File::create(output)?;
+                std::io::copy(&mut reader, &mut file)?;
             }
         }
     }

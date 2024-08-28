@@ -63,6 +63,14 @@ pub enum Error {
     /// A directory position was invalid
     #[error("invalid directory position")]
     InvalidDirectoryPosition,
+
+    /// An object should have been a file but was not
+    #[error("not a file")]
+    NotAFile,
+
+    /// The reader is busy
+    #[error("reader busy")]
+    ReaderBusy,
 }
 
 /// Create a key from a key string
