@@ -9,6 +9,8 @@ fn main() -> anyhow::Result<()> {
 
     reader.read_header()?;
 
+    dbg!(&reader);
+
     println!("Hello, world!");
 
     Ok(())
