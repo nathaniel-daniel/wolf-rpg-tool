@@ -127,8 +127,8 @@ where
         Ok((bytes_upper, bytes))
     }
 
-    /// Read a file header.
-    fn read_file_header(&mut self) -> Result<FileHeader, Error> {
+    /// Read a file entry.
+    fn read_file_entry(&mut self) -> Result<FileEntry, Error> {
         let name_position = self.read_encoded_u64()?;
         let attributes = self.read_encoded_u64()?;
         let created = self.read_encoded_u64()?;
@@ -138,7 +138,9 @@ where
         let data_size = self.read_encoded_u64()?;
         let compressed_data_size = self.read_encoded_u64()?;
 
-        Ok(FileHeader {
+        let attributes = Attributes::from_bits_retain(attributes);
+
+        Ok(FileEntry {
             name_position,
             attributes,
             time: FileTimes {
@@ -152,14 +154,20 @@ where
         })
     }
 
-    /// Read a directory header
-    fn read_directory_header(&mut self) -> Result<DirectoryHeader, Error> {
+    /// Read a directory entry
+    fn read_directory_entry(&mut self) -> Result<DirectoryEntry, Error> {
         let directory_position = self.read_encoded_u64()?;
         let parent_directory_position = self.read_encoded_u64()?;
         let num_files = self.read_encoded_u64()?;
         let file_head_position = self.read_encoded_u64()?;
 
-        Ok(DirectoryHeader {
+        let parent_directory_position = if parent_directory_position == u64::MAX {
+            None
+        } else {
+            Some(parent_directory_position)
+        };
+
+        Ok(DirectoryEntry {
             directory_position,
             parent_directory_position,
             num_files,
@@ -225,8 +233,8 @@ where
             }
             let relative_position = self.position - file_name_table_position - file_table_position;
 
-            let file_header = self.read_file_header()?;
-            file_table.insert(relative_position, file_header);
+            let file_entry = self.read_file_entry()?;
+            file_table.insert(relative_position, file_entry);
         }
 
         loop {
@@ -237,8 +245,8 @@ where
             let relative_position =
                 self.position - file_name_table_position - directory_table_position;
 
-            let directory_header = self.read_directory_header()?;
-            directory_table.insert(relative_position, directory_header);
+            let directory_entry = self.read_directory_entry()?;
+            directory_table.insert(relative_position, directory_entry);
         }
 
         self.header_data = Some(ArchiveHeaderData {
@@ -249,25 +257,102 @@ where
 
         Ok(())
     }
+
+    /// Get the root directory
+    pub fn get_root_directory(&self) -> Result<Option<&DirectoryEntry>, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        Ok(header_data.directory_table.get(&0))
+    }
+
+    /// Get the nth child of a directory.
+    pub fn get_directory_file(
+        &self,
+        directory: &DirectoryEntry,
+        index: usize,
+    ) -> Result<Option<&FileEntry>, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        let num_files = match usize::try_from(directory.num_files) {
+            Ok(num_files) => num_files,
+            Err(_err) => return Ok(None),
+        };
+
+        if index >= num_files {
+            return Ok(None);
+        }
+
+        let file_entry = header_data
+            .file_table
+            .range(directory.file_head_position..)
+            .take(num_files)
+            .nth(index)
+            .map(|(_, entry)| entry)
+            .ok_or(Error::InvalidDirectoryFileIndex)?;
+
+        Ok(Some(file_entry))
+    }
+
+    /// Get the name of a file entry.
+    pub fn get_file_name(&self, file_entry: &FileEntry) -> Result<&str, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        let file_name = header_data
+            .file_name_table
+            .get(&file_entry.name_position)
+            .ok_or(Error::InvalidFileNamePosition)?;
+
+        Ok(file_name)
+    }
+
+    /// Get a dir from a file that is for a dir.
+    pub fn get_dir_from_file(&self, file_entry: &FileEntry) -> Result<&DirectoryEntry, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        if !file_entry.is_dir() {
+            return Err(Error::NotADir);
+        }
+
+        let directory_entry = header_data
+            .directory_table
+            .get(&file_entry.data_position)
+            .ok_or(Error::InvalidDirectoryPosition)?;
+
+        Ok(directory_entry)
+    }
 }
 
 /// Data extracted from the header
 #[derive(Debug)]
 struct ArchiveHeaderData {
     file_name_table: BTreeMap<u64, String>,
-    file_table: BTreeMap<u64, FileHeader>,
-    directory_table: BTreeMap<u64, DirectoryHeader>,
+    file_table: BTreeMap<u64, FileEntry>,
+    directory_table: BTreeMap<u64, DirectoryEntry>,
 }
 
 /// The header for a file entry
 #[derive(Debug)]
-struct FileHeader {
+pub struct FileEntry {
     name_position: u64,
-    attributes: u64,
+    attributes: Attributes,
     time: FileTimes,
     data_position: u64,
     data_size: u64,
     compressed_data_size: u64,
+}
+
+impl FileEntry {
+    /// Returns true if this is for a directory.
+    pub fn is_dir(&self) -> bool {
+        self.attributes.contains(Attributes::Directory)
+    }
+}
+
+bitflags::bitflags! {
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    pub struct Attributes: u64 {
+        const Directory = 0x10;
+    }
 }
 
 /// File times
@@ -280,9 +365,16 @@ struct FileTimes {
 
 /// The header for a directory entry
 #[derive(Debug)]
-pub struct DirectoryHeader {
+pub struct DirectoryEntry {
     directory_position: u64,
-    parent_directory_position: u64,
+    parent_directory_position: Option<u64>,
     num_files: u64,
     file_head_position: u64,
+}
+
+impl DirectoryEntry {
+    /// Get the number of files in this dir.
+    pub fn num_files(&self) -> u64 {
+        self.num_files
+    }
 }

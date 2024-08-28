@@ -43,6 +43,26 @@ pub enum Error {
     /// The header has already been read
     #[error("header already read")]
     HeaderAlreadyRead,
+
+    /// The header hasn't been read
+    #[error("header not read")]
+    HeaderNotRead,
+
+    /// A directory file index was invalid
+    #[error("invalid directory file index")]
+    InvalidDirectoryFileIndex,
+
+    /// A file name position was invalid
+    #[error("invalid file name position")]
+    InvalidFileNamePosition,
+
+    /// An object should have been a dir but was not
+    #[error("not a dir")]
+    NotADir,
+
+    /// A directory position was invalid
+    #[error("invalid directory position")]
+    InvalidDirectoryPosition,
 }
 
 /// Create a key from a key string
