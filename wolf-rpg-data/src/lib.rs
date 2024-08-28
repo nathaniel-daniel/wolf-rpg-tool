@@ -71,6 +71,10 @@ pub enum Error {
     /// The reader is busy
     #[error("reader busy")]
     ReaderBusy,
+
+    /// Decompression failed
+    #[error("decompression failed")]
+    DecompressionFailed,
 }
 
 /// Create a key from a key string

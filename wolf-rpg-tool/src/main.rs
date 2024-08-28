@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::collections::VecDeque;
 use std::fs::File;
 use std::path::PathBuf;
 use wolf_rpg_data::ArchiveReader;
@@ -14,12 +15,13 @@ fn main() -> anyhow::Result<()> {
 
     reader.read_header()?;
 
-    let root_dir = reader.get_root_directory()?.context("no root directory")?;
-    dbg!(root_dir.num_files());
-    dbg!(root_dir);
+    // dbg!(&reader);
 
-    let mut stack = vec![(root_dir, Vec::new())];
-    while let Some((dir, path)) = stack.pop() {
+    let root_dir = reader.get_root_directory()?.context("no root directory")?;
+
+    let mut queue = VecDeque::new();
+    queue.push_back((root_dir, Vec::new()));
+    while let Some((dir, path)) = queue.pop_front() {
         for file_index in 0..dir.num_files() {
             let file_index = usize::try_from(file_index)?;
             let file = reader
@@ -34,10 +36,8 @@ fn main() -> anyhow::Result<()> {
 
             if file.is_dir() {
                 let dir = reader.get_dir_from_file(file)?;
-                stack.push((dir, path));
+                queue.push_back((dir, path));
             } else {
-                assert!(!file.is_compressed());
-
                 let mut output = output.clone();
                 output.extend(&path);
 
@@ -46,6 +46,9 @@ fn main() -> anyhow::Result<()> {
                 }
 
                 let mut reader = reader.get_file_reader(file)?;
+
+                dbg!(file.size());
+                dbg!(file.compressed_size());
 
                 let mut file = File::create(output)?;
                 std::io::copy(&mut reader, &mut file)?;
