@@ -43,19 +43,9 @@ impl FileEntry {
         self.file_times
     }
 
-    /// Set the file times.
-    pub fn set_file_times(&mut self, file_times: FileTimes) {
-        self.file_times = file_times;
-    }
-
     /// Get the file attributes.
     pub fn get_attributes(&self) -> Attributes {
         self.attributes
-    }
-
-    /// Set the file attributes
-    pub fn set_attributes(&mut self, attributes: Attributes) {
-        self.attributes = attributes;
     }
 }
 

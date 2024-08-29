@@ -17,16 +17,14 @@ fn main() -> anyhow::Result<()> {
 
     // dbg!(&reader);
 
-    let root_dir = reader.get_root_directory()?.context("no root directory")?;
+    let root_dir = reader.get_root_dir()?.context("no root dir")?;
 
     let mut queue = VecDeque::new();
     queue.push_back((root_dir, Vec::new()));
     while let Some((dir, path)) = queue.pop_front() {
         for file_index in 0..dir.num_files() {
             let file_index = usize::try_from(file_index)?;
-            let file = reader
-                .get_directory_file(dir, file_index)?
-                .context("no file")?;
+            let file = reader.get_dir_file(dir, file_index)?.context("no file")?;
 
             let file_name = reader.get_file_name(file)?;
 

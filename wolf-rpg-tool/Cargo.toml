@@ -7,4 +7,4 @@ edition = "2021"
 anyhow = "1.0.86"
 argh = "0.1.12"
 thiserror = "1.0.63"
-wolf-rpg-data = { version = "0.0.0", path = "../wolf-rpg-data" }
+wolf-rpg-data = { path = "../wolf-rpg-data" }

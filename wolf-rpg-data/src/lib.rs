@@ -75,6 +75,10 @@ pub enum Error {
     /// Decompression failed
     #[error("decompression failed")]
     DecompressionFailed,
+
+    /// A file position was invalid
+    #[error("invalid file position")]
+    InvalidFilePosition,
 }
 
 /// Create a key from a key string

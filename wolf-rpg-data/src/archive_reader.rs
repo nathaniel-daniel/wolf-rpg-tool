@@ -282,14 +282,14 @@ where
     }
 
     /// Get the root directory
-    pub fn get_root_directory(&self) -> Result<Option<&DirectoryEntry>, Error> {
+    pub fn get_root_dir(&self) -> Result<Option<&DirectoryEntry>, Error> {
         let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
 
         Ok(header_data.directory_table.get(&0))
     }
 
     /// Get the nth child of a directory.
-    pub fn get_directory_file(
+    pub fn get_dir_file(
         &self,
         directory: &DirectoryEntry,
         index: usize,
@@ -342,6 +342,38 @@ where
             .ok_or(Error::InvalidDirectoryPosition)?;
 
         Ok(directory_entry)
+    }
+
+    /// Get the file for a dir.
+    pub fn get_file_from_dir(&self, directory_entry: &DirectoryEntry) -> Result<&FileEntry, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        let file_entry = header_data
+            .file_table
+            .get(&directory_entry.directory_position)
+            .ok_or(Error::InvalidFilePosition)?;
+
+        Ok(file_entry)
+    }
+
+    /// Get the parent dir for a dir, if it exists.
+    pub fn get_parent_dir(
+        &self,
+        directory_entry: &DirectoryEntry,
+    ) -> Result<Option<&DirectoryEntry>, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        let parent_directory_position = match directory_entry.parent_directory_position {
+            Some(parent_directory_position) => parent_directory_position,
+            None => return Ok(None),
+        };
+
+        let directory_entry = header_data
+            .directory_table
+            .get(&parent_directory_position)
+            .ok_or(Error::InvalidDirectoryPosition)?;
+
+        Ok(Some(directory_entry))
     }
 
     /// Get a file reader.
