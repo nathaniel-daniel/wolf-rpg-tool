@@ -1,3 +1,8 @@
+mod file_entry;
+
+pub use self::file_entry::Attributes;
+pub use self::file_entry::FileEntry;
+pub use self::file_entry::FileTimes;
 use crate::create_key;
 use crate::Error;
 use crate::Key;
@@ -143,8 +148,8 @@ where
         let name_position = self.read_encoded_u64()?;
         let attributes = self.read_encoded_u64()?;
         let created = self.read_encoded_u64()?;
-        let read = self.read_encoded_u64()?;
-        let updated = self.read_encoded_u64()?;
+        let accessed = self.read_encoded_u64()?;
+        let modified = self.read_encoded_u64()?;
         let data_position = self.read_encoded_u64()?;
         let data_size = self.read_encoded_u64()?;
         let compressed_data_size = self.read_encoded_u64()?;
@@ -161,8 +166,8 @@ where
             attributes,
             file_times: FileTimes {
                 created,
-                read,
-                updated,
+                accessed,
+                modified,
             },
             data_position,
             data_size,
@@ -170,7 +175,7 @@ where
         })
     }
 
-    /// Read a directory entry
+    /// Read a directory entry.
     fn read_directory_entry(&mut self) -> Result<DirectoryEntry, Error> {
         let directory_position = self.read_encoded_u64()?;
         let parent_directory_position = self.read_encoded_u64()?;
@@ -405,60 +410,6 @@ struct ArchiveHeaderData {
     file_name_table: BTreeMap<u64, String>,
     file_table: BTreeMap<u64, FileEntry>,
     directory_table: BTreeMap<u64, DirectoryEntry>,
-}
-
-/// The header for a file entry
-#[derive(Debug)]
-pub struct FileEntry {
-    name_position: u64,
-    attributes: Attributes,
-    file_times: FileTimes,
-    data_position: u64,
-    data_size: u64,
-    compressed_data_size: Option<u64>,
-}
-
-impl FileEntry {
-    /// Returns true if this is for a directory.
-    pub fn is_dir(&self) -> bool {
-        self.attributes.contains(Attributes::Directory)
-    }
-
-    /// Returns true if this is for a file.
-    pub fn is_file(&self) -> bool {
-        !self.is_dir()
-    }
-
-    /// Returns true if this is compressed.
-    pub fn is_compressed(&self) -> bool {
-        self.compressed_data_size.is_some()
-    }
-
-    /// Get the file size.
-    pub fn size(&self) -> u64 {
-        self.data_size
-    }
-
-    /// Get the compressed file size, if it is compressed.
-    pub fn compressed_size(&self) -> Option<u64> {
-        self.compressed_data_size
-    }
-}
-
-bitflags::bitflags! {
-    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-    pub struct Attributes: u64 {
-        const Directory = 0x0010;
-        const Archive = 0x0020;
-    }
-}
-
-/// File times
-#[derive(Debug)]
-struct FileTimes {
-    created: u64,
-    read: u64,
-    updated: u64,
 }
 
 /// The header for a directory entry

@@ -47,9 +47,6 @@ fn main() -> anyhow::Result<()> {
 
                 let mut reader = reader.get_file_reader(file)?;
 
-                dbg!(file.size());
-                dbg!(file.compressed_size());
-
                 let mut file = File::create(output)?;
                 std::io::copy(&mut reader, &mut file)?;
             }
