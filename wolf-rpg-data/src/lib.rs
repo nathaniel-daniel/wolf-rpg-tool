@@ -4,6 +4,7 @@ mod key_string;
 pub use self::archive_reader::ArchiveReader;
 pub use self::archive_reader::DirectoryEntry;
 pub use self::archive_reader::FileEntry;
+pub use self::archive_reader::FileReader;
 pub use self::archive_reader::FileTimes;
 pub use self::archive_reader::WalkDirIter;
 pub use self::key_string::KeyString;
