@@ -1,8 +1,10 @@
 mod file_entry;
+mod walk_dir;
 
 pub use self::file_entry::Attributes;
 pub use self::file_entry::FileEntry;
 pub use self::file_entry::FileTimes;
+pub use self::walk_dir::WalkDirIter;
 use crate::create_key;
 use crate::Error;
 use crate::Key;
@@ -14,6 +16,8 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
+
+const FILE_ENTRY_SIZE: usize = 64;
 
 fn key_xor(position: u64, key: Key, buffer: &mut [u8]) {
     let position_usize = usize::try_from(position).unwrap();
@@ -55,6 +59,80 @@ impl<R> ArchiveReader<R> {
             encoding: SHIFT_JIS,
             header_data: None,
         }
+    }
+
+    /// Get the name of a file entry.
+    pub fn get_file_name(&self, file_entry: &FileEntry) -> Result<&str, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        let file_name = header_data
+            .file_name_table
+            .get(&file_entry.name_position)
+            .ok_or(Error::InvalidFileNamePosition)?;
+
+        Ok(file_name)
+    }
+
+    /// Get a dir from a file that is for a dir.
+    pub fn get_dir_from_file(&self, file_entry: &FileEntry) -> Result<&DirectoryEntry, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        if !file_entry.is_dir() {
+            return Err(Error::NotADir);
+        }
+
+        let directory_entry = header_data
+            .directory_table
+            .get(&file_entry.data_position)
+            .ok_or(Error::InvalidDirectoryPosition)?;
+
+        Ok(directory_entry)
+    }
+
+    /// Get the nth child of a directory.
+    pub fn get_dir_file(
+        &self,
+        directory: &DirectoryEntry,
+        index: usize,
+    ) -> Result<Option<&FileEntry>, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        let num_files = match usize::try_from(directory.num_files) {
+            Ok(num_files) => num_files,
+            Err(_err) => return Ok(None),
+        };
+
+        if index >= num_files {
+            return Ok(None);
+        }
+
+        let position =
+            directory.file_head_position + u64::try_from(index * FILE_ENTRY_SIZE).unwrap();
+        let file_entry = header_data
+            .file_table
+            .get(&position)
+            .ok_or(Error::InvalidDirectoryFileIndex)?;
+
+        Ok(Some(file_entry))
+    }
+
+    /// Get the file for a dir.
+    pub fn get_file_from_dir(&self, directory_entry: &DirectoryEntry) -> Result<&FileEntry, Error> {
+        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
+
+        let file_entry = header_data
+            .file_table
+            .get(&directory_entry.directory_position)
+            .ok_or(Error::InvalidFilePosition)?;
+
+        Ok(file_entry)
+    }
+
+    /// Walk over the given dir.
+    pub fn walk_dir(&self, dir: &DirectoryEntry) -> Result<WalkDirIter<R>, Error> {
+        let file_entry = self.get_file_from_dir(dir)?;
+
+        Ok(WalkDirIter::new(self, file_entry))
     }
 }
 
@@ -286,74 +364,6 @@ where
         let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
 
         Ok(header_data.directory_table.get(&0))
-    }
-
-    /// Get the nth child of a directory.
-    pub fn get_dir_file(
-        &self,
-        directory: &DirectoryEntry,
-        index: usize,
-    ) -> Result<Option<&FileEntry>, Error> {
-        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
-
-        let num_files = match usize::try_from(directory.num_files) {
-            Ok(num_files) => num_files,
-            Err(_err) => return Ok(None),
-        };
-
-        if index >= num_files {
-            return Ok(None);
-        }
-
-        let file_entry = header_data
-            .file_table
-            .range(directory.file_head_position..)
-            .take(num_files)
-            .nth(index)
-            .map(|(_, entry)| entry)
-            .ok_or(Error::InvalidDirectoryFileIndex)?;
-
-        Ok(Some(file_entry))
-    }
-
-    /// Get the name of a file entry.
-    pub fn get_file_name(&self, file_entry: &FileEntry) -> Result<&str, Error> {
-        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
-
-        let file_name = header_data
-            .file_name_table
-            .get(&file_entry.name_position)
-            .ok_or(Error::InvalidFileNamePosition)?;
-
-        Ok(file_name)
-    }
-
-    /// Get a dir from a file that is for a dir.
-    pub fn get_dir_from_file(&self, file_entry: &FileEntry) -> Result<&DirectoryEntry, Error> {
-        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
-
-        if !file_entry.is_dir() {
-            return Err(Error::NotADir);
-        }
-
-        let directory_entry = header_data
-            .directory_table
-            .get(&file_entry.data_position)
-            .ok_or(Error::InvalidDirectoryPosition)?;
-
-        Ok(directory_entry)
-    }
-
-    /// Get the file for a dir.
-    pub fn get_file_from_dir(&self, directory_entry: &DirectoryEntry) -> Result<&FileEntry, Error> {
-        let header_data = self.header_data.as_ref().ok_or(Error::HeaderNotRead)?;
-
-        let file_entry = header_data
-            .file_table
-            .get(&directory_entry.directory_position)
-            .ok_or(Error::InvalidFilePosition)?;
-
-        Ok(file_entry)
     }
 
     /// Get the parent dir for a dir, if it exists.
